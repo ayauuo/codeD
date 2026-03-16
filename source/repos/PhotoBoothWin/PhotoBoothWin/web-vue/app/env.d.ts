@@ -56,4 +56,6 @@ interface ImportMetaEnv {
   readonly VITE_SHOOT_ONLY_HALF_PRESS?: string
   /** 強制拍攝不等待對焦：1/true 時到時機就拍，不管有無對焦成功 */
   readonly VITE_FORCE_CAPTURE_WITHOUT_AF?: string
+  /** 無網路版：1/true 時不上傳、不產生 QR code，結果頁只顯示照片與列印按鈕 */
+  readonly VITE_OFFLINE_MODE?: string
 }

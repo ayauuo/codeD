@@ -3,6 +3,11 @@ import QRCode from 'qrcode'
 import type { Template, ScreenName, FilterId, TemplateSlot } from '@/types/photobooth'
 import { callHost } from './useHost'
 
+const isOfflineMode = () => {
+  const v = import.meta.env.VITE_OFFLINE_MODE
+  return v === '1' || String(v).toLowerCase() === 'true'
+}
+
 const TEMPLATES: Template[] = [
   {
     id: 'bk01',
@@ -111,23 +116,30 @@ const resultDisplayUrl = computed(() => {
   return ''
 })
 
-/** 占位時顯示的 QR 圖與文字（尚無合成圖時用，非同步產生） */
+/** 占位時顯示的 QR 圖與文字（尚無合成圖時用，非同步產生；無網路版不產生） */
 const placeholderQrImageUrl = ref<string>('')
 const PLACEHOLDER_QR_TEXT = 'https://example.com/download'
-QRCode.toDataURL(PLACEHOLDER_QR_TEXT, { width: 600, margin: 2 })
-  .then((url: string) => { placeholderQrImageUrl.value = url })
-  .catch(() => {})
+if (!isOfflineMode()) {
+  QRCode.toDataURL(PLACEHOLDER_QR_TEXT, { width: 600, margin: 2 })
+    .then((url: string) => { placeholderQrImageUrl.value = url })
+    .catch(() => {})
+}
 
-/** 結果畫面要顯示的 QR 圖：有合成圖用真實 QR，否則占位時用預設 QR */
+/** 無網路版時不顯示 QR（結果頁隱藏 QR 區塊） */
+const showQrCode = computed(() => !isOfflineMode())
+
+/** 結果畫面要顯示的 QR 圖：有合成圖用真實 QR，否則占位時用預設 QR；無網路版一律不顯示 */
 const qrDisplayUrl = computed(() => {
+  if (isOfflineMode()) return ''
   if (finalPreviewUrl.value) return qrImageUrl.value
   const showPlaceholder = import.meta.env.VITE_RESULT_SHOW_TEMPLATE_PLACEHOLDER
   if (showPlaceholder === '1' || showPlaceholder === 'true') return placeholderQrImageUrl.value
   return ''
 })
 
-/** 結果畫面要顯示的 QR 文字：有合成圖用真實網址，否則占位時用預設網址 */
+/** 結果畫面要顯示的 QR 文字：有合成圖用真實網址，否則占位時用預設網址；無網路版一律不顯示 */
 const qrDisplayText = computed(() => {
+  if (isOfflineMode()) return ''
   if (finalPreviewUrl.value) return qrText.value
   const showPlaceholder = import.meta.env.VITE_RESULT_SHOW_TEMPLATE_PLACEHOLDER
   if (showPlaceholder === '1' || showPlaceholder === 'true') return PLACEHOLDER_QR_TEXT
@@ -245,10 +257,12 @@ export function usePhotobooth() {
 
   function setResultMock() {
     finalPreviewUrl.value = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
-    qrText.value = 'https://example.com/test'
-    QRCode.toDataURL('https://example.com/test', { width: 600, margin: 2 })
-      .then((url: string) => { qrImageUrl.value = url })
-      .catch(() => { qrImageUrl.value = '' })
+    if (!isOfflineMode()) {
+      qrText.value = 'https://example.com/test'
+      QRCode.toDataURL('https://example.com/test', { width: 600, margin: 2 })
+        .then((url: string) => { qrImageUrl.value = url })
+        .catch(() => { qrImageUrl.value = '' })
+    }
   }
 
   /**
@@ -411,43 +425,46 @@ export function usePhotobooth() {
         sizeKey: tpl.sizeKey ?? '4x6',
       }).catch(() => {})
 
-      const basePage = typeof import.meta.env.VITE_DOWNLOAD_PAGE_BASE_URL === 'string' && import.meta.env.VITE_DOWNLOAD_PAGE_BASE_URL
-        ? import.meta.env.VITE_DOWNLOAD_PAGE_BASE_URL.replace(/\/$/, '')
-        : ''
+      // 無網路版：不上傳、不產生 QR code
+      if (!isOfflineMode()) {
+        const basePage = typeof import.meta.env.VITE_DOWNLOAD_PAGE_BASE_URL === 'string' && import.meta.env.VITE_DOWNLOAD_PAGE_BASE_URL
+          ? import.meta.env.VITE_DOWNLOAD_PAGE_BASE_URL.replace(/\/$/, '')
+          : ''
 
-      // 上傳完成後再進結果頁：取得圖片／影片 URL，組出帶參數的下載頁網址給 QR code
-      let imageUrl = ''
-      try {
-        const uploadRes = await callHost('upload_file', { filePath }) as { url?: string }
-        imageUrl = uploadRes?.url ?? ''
-      } catch (e) {
-        console.error('[拍貼機] 上傳合成圖失敗', e)
-      }
-      let videoUrl = ''
-      if (captureVideoBlob.value) {
-        const videoDataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => resolve(reader.result as string)
-          reader.onerror = reject
-          reader.readAsDataURL(captureVideoBlob.value!)
-        })
+        // 上傳完成後再進結果頁：取得圖片／影片 URL，組出帶參數的下載頁網址給 QR code
+        let imageUrl = ''
         try {
-          const videoRes = await callHost('upload_video', { videoData: videoDataUrl }) as { url?: string }
-          videoUrl = videoRes?.url ?? ''
-          finalVideoUrl.value = videoUrl
+          const uploadRes = await callHost('upload_file', { filePath }) as { url?: string }
+          imageUrl = uploadRes?.url ?? ''
         } catch (e) {
-          console.error('[拍貼機] 上傳影片失敗', e)
+          console.error('[拍貼機] 上傳合成圖失敗', e)
         }
-      }
+        let videoUrl = ''
+        if (captureVideoBlob.value) {
+          const videoDataUrl = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(reader.result as string)
+            reader.onerror = reject
+            reader.readAsDataURL(captureVideoBlob.value!)
+          })
+          try {
+            const videoRes = await callHost('upload_video', { videoData: videoDataUrl }) as { url?: string }
+            videoUrl = videoRes?.url ?? ''
+            finalVideoUrl.value = videoUrl
+          } catch (e) {
+            console.error('[拍貼機] 上傳影片失敗', e)
+          }
+        }
 
-      // 下載頁需 ?img=... 與選填 &video=...，掃 QR 才能顯示相片／影片
-      const qrUrl = basePage
-        ? `${basePage}?img=${encodeURIComponent(imageUrl)}${videoUrl ? `&video=${encodeURIComponent(videoUrl)}` : ''}`
-        : (imageUrl || 'https://example.com/download')
-      qrText.value = qrUrl
-      QRCode.toDataURL(qrUrl, { width: 600, margin: 2 })
-        .then((url) => { qrImageUrl.value = url })
-        .catch(() => { qrImageUrl.value = '' })
+        // 下載頁需 ?img=... 與選填 &video=...，掃 QR 才能顯示相片／影片
+        const qrUrl = basePage
+          ? `${basePage}?img=${encodeURIComponent(imageUrl)}${videoUrl ? `&video=${encodeURIComponent(videoUrl)}` : ''}`
+          : (imageUrl || 'https://example.com/download')
+        qrText.value = qrUrl
+        QRCode.toDataURL(qrUrl, { width: 600, margin: 2 })
+          .then((url) => { qrImageUrl.value = url })
+          .catch(() => { qrImageUrl.value = '' })
+      }
 
       showScreen('result')
 
@@ -496,6 +513,7 @@ export function usePhotobooth() {
     finalVideoUrl,
     qrImageUrl,
     qrText,
+    showQrCode,
     qrDisplayUrl,
     qrDisplayText,
     autoPrint,

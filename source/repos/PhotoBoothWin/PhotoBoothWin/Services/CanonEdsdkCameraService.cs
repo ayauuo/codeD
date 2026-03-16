@@ -639,48 +639,32 @@ namespace PhotoBoothWin.Services
             // #region agent log
             try { File.AppendAllText(DebugLogPath, JsonSerializer.Serialize(new { location = "CanonEdsdkCameraService.cs:OnObjectEventInstance", message = "after_retain", data = new { retainResultHex = "0x" + retainResult.ToString("X"), ok = (retainResult == (uint)EdsError.OK) }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionId = "debug-session", runId = "run1", hypothesisId = "H3" }) + "\n"); } catch { }
             // #endregion
+            // 無論 EdsRetain 成功與否，皆在 callback 執行緒直接下載，避免 UI 執行緒被阻塞導致卡頓
+            System.Diagnostics.Debug.WriteLine($"[Shoot] OnObjectEvent: 在 callback 執行緒下載（避免 UI 卡頓）…");
             if (retainResult != (uint)EdsError.OK)
-            {
-                // 部分機型 (如 4000D) 在 callback 執行緒上 EdsRetain 回傳 0x2，改為在當前執行緒直接下載，避免逾時
-                System.Diagnostics.Debug.WriteLine($"[Shoot] OnObjectEvent: EdsRetain 失敗 (0x{retainResult:X})，改在 callback 執行緒直接下載");
                 try { File.AppendAllText(DebugLogPath, JsonSerializer.Serialize(new { location = "CanonEdsdkCameraService.cs:OnObjectEventInstance", message = "download_in_callback", data = new { retainResultHex = "0x" + retainResult.ToString("X") }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionId = "debug-session", runId = "run1", hypothesisId = "H3" }) + "\n"); } catch { }
-                _isDownloading = true;
-                try
-                {
-                    var path = DownloadDirItemToPath(inRef);
-                    _pendingCaptureTcs?.TrySetResult(path);
-                    var disp = Application.Current?.Dispatcher;
-                    if (disp != null)
-                        disp.BeginInvoke(new Action(() => PhotoCaptured?.Invoke(this, path)), System.Windows.Threading.DispatcherPriority.Send);
-                    else
-                        PhotoCaptured?.Invoke(this, path);
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[Shoot] OnObjectEvent 直接下載例外：{ex.GetType().Name} {ex.Message}");
-                    try { File.AppendAllText(DebugLogPath, JsonSerializer.Serialize(new { location = "CanonEdsdkCameraService.cs:OnObjectEventInstance", message = "download_in_callback_exception", data = new { exType = ex.GetType().Name, exMessage = ex.Message }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionId = "debug-session", runId = "run1", hypothesisId = "H3" }) + "\n"); } catch { }
-                    _pendingCaptureTcs?.TrySetException(ex);
-                }
-                finally
-                {
-                    ReleaseQuietly(inRef);
-                    _isDownloading = false;
-                }
-                return (uint)EdsError.OK;
-            }
-            System.Diagnostics.Debug.WriteLine($"[Shoot] OnObjectEvent: 收到 inEvent=0x{inEvent:X}，委派至 UI 執行緒下載（DispatcherPriority.Send）…");
-            var dispatcher = Application.Current?.Dispatcher;
-            if (dispatcher == null)
-            {
-                try { File.AppendAllText(DebugLogPath, JsonSerializer.Serialize(new { location = "CanonEdsdkCameraService.cs:OnObjectEventInstance", message = "dispatcher_null", data = new { }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionId = "debug-session", runId = "run1", hypothesisId = "H3" }) + "\n"); } catch { }
-                ReleaseQuietly(inRef);
-                _pendingCaptureTcs?.TrySetException(new InvalidOperationException("No WPF Dispatcher for download."));
-                return (uint)EdsError.OK;
-            }
             _isDownloading = true;
-            try { File.AppendAllText(DebugLogPath, JsonSerializer.Serialize(new { location = "CanonEdsdkCameraService.cs:OnObjectEventInstance", message = "invoke_async_scheduled", data = new { inRef = inRef.ToString() }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionId = "debug-session", runId = "run1", hypothesisId = "H4" }) + "\n"); } catch { }
-            // 下載需盡快執行以避免相機撤銷傳輸；使用 Send 並同步 Invoke 強制序列化
-            dispatcher.Invoke(() => DownloadAndRelease(inRef), System.Windows.Threading.DispatcherPriority.Send);
+            try
+            {
+                var path = DownloadDirItemToPath(inRef);
+                _pendingCaptureTcs?.TrySetResult(path);
+                var disp = Application.Current?.Dispatcher;
+                if (disp != null)
+                    disp.BeginInvoke(new Action(() => PhotoCaptured?.Invoke(this, path)), System.Windows.Threading.DispatcherPriority.Send);
+                else
+                    PhotoCaptured?.Invoke(this, path);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Shoot] OnObjectEvent 下載例外：{ex.GetType().Name} {ex.Message}");
+                try { File.AppendAllText(DebugLogPath, JsonSerializer.Serialize(new { location = "CanonEdsdkCameraService.cs:OnObjectEventInstance", message = "download_in_callback_exception", data = new { exType = ex.GetType().Name, exMessage = ex.Message }, timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), sessionId = "debug-session", runId = "run1", hypothesisId = "H3" }) + "\n"); } catch { }
+                _pendingCaptureTcs?.TrySetException(ex);
+            }
+            finally
+            {
+                ReleaseQuietly(inRef);
+                _isDownloading = false;
+            }
             return (uint)EdsError.OK;
         }
 

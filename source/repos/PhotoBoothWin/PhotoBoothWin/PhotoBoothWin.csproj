@@ -34,6 +34,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- S3 設定檔：若存在則複製到輸出目錄（含金鑰，已加入 .gitignore） -->
+    <Content Include="s3_config.txt" Condition="Exists('s3_config.txt')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <!-- Vue (web-vue/app) build 輸出到 web/，以下包含整個 web 目錄 -->
     <Content Include="web\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
@@ -58,6 +63,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="AWSSDK.S3" Version="3.7.400" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="9.0.0" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3650.58" />
     <PackageReference Include="System.IO.Ports" Version="9.0.0" />

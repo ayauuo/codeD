@@ -404,6 +404,9 @@ FodyWeavers.xsd
 !.vscode/extensions.json
 !.vscode/*.code-snippets
 
+# AWS S3 金鑰（勿提交到版控）
+**/s3_config.txt
+
 # Local History for Visual Studio Code
 .history/
 

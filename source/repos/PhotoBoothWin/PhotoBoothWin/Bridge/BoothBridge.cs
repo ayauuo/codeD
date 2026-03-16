@@ -1,3 +1,7 @@
+using Amazon;
+using Amazon.S3;
+using Amazon.S3.Model;
+using Amazon.S3.Transfer;
 using PhotoBoothWin.Models;
 using PhotoBoothWin.Services;
 using System;
@@ -87,7 +91,7 @@ namespace PhotoBoothWin.Bridge
 
                             copies = Math.Clamp(copies, 1, 5);
 
-                            HotFolderPrinter.SendToHotFolder(filePath, sizeKey, copies);
+                            await Task.Run(() => HotFolderPrinter.SendToHotFolder(filePath, sizeKey, copies)).ConfigureAwait(false);
                             return Ok(req.id, new { copies });
                         }
 
@@ -499,16 +503,11 @@ namespace PhotoBoothWin.Bridge
 
                     case "upload_file":
                         {
-                            // 從本機已存好的檔案上傳，不再從 Vue 傳 base64，減少轉圈時間
+                            // 從本機已存好的檔案上傳到 AWS S3
                             var filePath = req.data.TryGetProperty("filePath", out var fpEl) ? fpEl.GetString() ?? "" : "";
                             if (string.IsNullOrWhiteSpace(filePath) || !File.Exists(filePath))
                                 return RespFail(req.id, "upload_file 缺少有效 filePath");
-                            var ext = Path.GetExtension(filePath).TrimStart('.').ToLowerInvariant();
-                            var mime = ext switch { "png" => "image/png", "gif" => "image/gif", _ => "image/jpeg" };
-                            var bytes = await File.ReadAllBytesAsync(filePath).ConfigureAwait(false);
-                            var base64 = Convert.ToBase64String(bytes);
-                            var imageData = $"data:{mime};base64,{base64}";
-                            var (url, _, err) = await UploadToServerAsync(new { imageData }).ConfigureAwait(false);
+                            var (url, err) = await UploadToS3Async(filePath).ConfigureAwait(false);
                             if (err != null) return RespFail(req.id, err);
                             return Ok(req.id, new { url = url ?? "" });
                         }
@@ -551,7 +550,7 @@ namespace PhotoBoothWin.Bridge
                             Directory.CreateDirectory(outDir);
                             var path = Path.Combine(outDir, $"shot_{DateTime.Now:yyyyMMdd_HHmmss_fff}.{ext}");
 
-                            File.WriteAllBytes(path, bytes);
+                            await File.WriteAllBytesAsync(path, bytes).ConfigureAwait(false);
                             return RespOk(req.id, new { filePath = path });
                         }
 
@@ -721,6 +720,81 @@ namespace PhotoBoothWin.Bridge
             if (!data.TryGetProperty(name, out var el)) return false;
             value = el.GetString() ?? "";
             return true;
+        }
+
+        /// <summary>從 s3_config.txt 或環境變數讀取 AWS S3 設定。exe 旁需有 s3_config.txt（格式：AccessKey=xxx, SecretKey=xxx, Bucket=xxx, Region=ap-northeast-1）。</summary>
+        private static (string? accessKey, string? secretKey, string bucket, RegionEndpoint region) LoadS3Config()
+        {
+            var accessKey = Environment.GetEnvironmentVariable("AWS_ACCESS_KEY_ID");
+            var secretKey = Environment.GetEnvironmentVariable("AWS_SECRET_ACCESS_KEY");
+            var bucket = "my-photobooth-photos2026";
+            var regionName = "ap-northeast-1";
+
+            if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
+            {
+                var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "s3_config.txt");
+                if (File.Exists(configPath))
+                {
+                    foreach (var line in File.ReadAllLines(configPath))
+                    {
+                        var trimmed = line.Trim();
+                        if (trimmed.StartsWith("#") || string.IsNullOrEmpty(trimmed)) continue;
+                        var idx = trimmed.IndexOf('=');
+                        if (idx <= 0) continue;
+                        var key = trimmed[..idx].Trim();
+                        var val = trimmed[(idx + 1)..].Trim();
+                        if (key.Equals("AccessKey", StringComparison.OrdinalIgnoreCase)) accessKey = val;
+                        else if (key.Equals("SecretKey", StringComparison.OrdinalIgnoreCase)) secretKey = val;
+                        else if (key.Equals("Bucket", StringComparison.OrdinalIgnoreCase)) bucket = val;
+                        else if (key.Equals("Region", StringComparison.OrdinalIgnoreCase)) regionName = val;
+                    }
+                }
+            }
+
+            var region = regionName?.ToLowerInvariant() switch
+            {
+                "ap-northeast-1" => RegionEndpoint.APNortheast1,
+                "ap-northeast-2" => RegionEndpoint.APNortheast2,
+                "us-east-1" => RegionEndpoint.USEast1,
+                "us-west-2" => RegionEndpoint.USWest2,
+                _ => RegionEndpoint.APNortheast1
+            };
+            return (accessKey, secretKey, bucket, region);
+        }
+
+        /// <summary>上傳檔案到 AWS S3，回傳 (url, error)。</summary>
+        private static async Task<(string? url, string? error)> UploadToS3Async(string filePath)
+        {
+            var (accessKey, secretKey, bucket, region) = LoadS3Config();
+            if (string.IsNullOrEmpty(accessKey) || string.IsNullOrEmpty(secretKey))
+                return (null, "未設定 S3 金鑰（請在 exe 旁建立 s3_config.txt 或設定環境變數 AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY）");
+
+            try
+            {
+                var s3Client = new AmazonS3Client(accessKey, secretKey, region);
+                var transferUtility = new TransferUtility(s3Client);
+
+                var ext = Path.GetExtension(filePath).TrimStart('.');
+                var fileName = $"photo_{DateTime.Now:yyyyMMdd_HHmmss}_{Guid.NewGuid():N}.{ext}";
+
+                await transferUtility.UploadAsync(filePath, bucket, fileName).ConfigureAwait(false);
+
+                // 產生 1 小時過期的 Pre-signed URL，讓下載頁可跨域讀取（需配合 S3 CORS 設定）
+                var preSignedRequest = new GetPreSignedUrlRequest
+                {
+                    BucketName = bucket,
+                    Key = fileName,
+                    Expires = DateTime.UtcNow.AddHours(1)
+                };
+                var imageUrl = s3Client.GetPreSignedURL(preSignedRequest);
+                System.Diagnostics.Debug.WriteLine($"[S3] 上傳成功，Pre-signed URL 有效期 1 小時");
+                return (imageUrl, null);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"[S3] 上傳失敗: {ex.Message}");
+                return (null, ex.Message);
+            }
         }
 
         /// <summary>POST JSON 到上傳 API（與 Vue 的 PHP upload.php 格式一致），回傳 (url, videoUrl, error)。</summary>

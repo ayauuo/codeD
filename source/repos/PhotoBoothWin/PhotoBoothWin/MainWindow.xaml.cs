@@ -629,26 +629,36 @@ namespace PhotoBoothWin
                 _liveViewFramesPushed = 0;
             _lastLiveViewPost = now;
 
-            Dispatcher.InvokeAsync(() =>
+            // 在背景執行緒進行 JPEG 編碼與 Base64 轉換，避免阻塞 UI
+            var frameToEncode = frame;
+            _ = Task.Run(() =>
             {
                 if (!BoothBridge.LiveViewPushToWeb) return;
                 try
                 {
                     using var mem = new MemoryStream();
                     var encoder = new JpegBitmapEncoder();
-                    encoder.Frames.Add(BitmapFrame.Create(frame));
+                    encoder.Frames.Add(BitmapFrame.Create(frameToEncode));
                     encoder.Save(mem);
                     mem.Position = 0;
                     var bytes = mem.ToArray();
                     var base64 = Convert.ToBase64String(bytes);
                     var dataUrl = "data:image/jpeg;base64," + base64;
                     var json = JsonSerializer.Serialize(new { @event = "liveview_frame", dataUrl });
-                    Web.CoreWebView2?.PostWebMessageAsString(json);
-                    _liveViewFramesPushed++;
-                    if (_liveViewFramesPushed == 1)
-                        System.Diagnostics.Debug.WriteLine("[Live View] 第一幀已推送到 WebView。");
-                    else if (_liveViewFramesPushed % 60 == 0)
-                        System.Diagnostics.Debug.WriteLine($"[Live View] 已推送 {_liveViewFramesPushed} 幀到 WebView。");
+                    Dispatcher.InvokeAsync(() =>
+                    {
+                        if (!BoothBridge.LiveViewPushToWeb) return;
+                        try
+                        {
+                            Web.CoreWebView2?.PostWebMessageAsString(json);
+                            _liveViewFramesPushed++;
+                            if (_liveViewFramesPushed == 1)
+                                System.Diagnostics.Debug.WriteLine("[Live View] 第一幀已推送到 WebView。");
+                            else if (_liveViewFramesPushed % 60 == 0)
+                                System.Diagnostics.Debug.WriteLine($"[Live View] 已推送 {_liveViewFramesPushed} 幀到 WebView。");
+                        }
+                        catch { }
+                    });
                 }
                 catch
                 {

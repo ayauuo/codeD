@@ -1,0 +1,13 @@
+[
+  {
+    "AllowedHeaders": ["*"],
+    "AllowedMethods": ["GET", "HEAD"],
+    "AllowedOrigins": [
+      "https://guolicom.net",
+      "https://www.guolicom.net",
+      "http://localhost:5173",
+      "https://app"
+    ],
+    "ExposeHeaders": []
+  }
+]

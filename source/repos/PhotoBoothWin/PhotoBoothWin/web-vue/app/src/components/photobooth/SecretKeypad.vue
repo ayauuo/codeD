@@ -5,7 +5,7 @@ import { callHost } from '@/composables/useHost'
 
 const REQUIRED_TAPS = 15
 const TAP_RESET_MS = 1500
-const PASSWORD = '1234'
+const PASSWORD = '9347'
 
 const tapCount = ref(0)
 const lastTapAt = ref(0)

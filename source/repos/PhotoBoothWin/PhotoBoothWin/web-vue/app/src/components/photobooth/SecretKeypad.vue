@@ -16,7 +16,7 @@ const input = ref('')
 const error = ref('')
 const uploadMessage = ref('')
 
-const { showScreen, resetSession } = usePhotobooth()
+const { showScreen, setTestSession } = usePhotobooth()
 
 function resetTap() {
   tapCount.value = 0
@@ -84,10 +84,11 @@ function onWatchDb() {
   showScreen('db-view')
 }
 
-function onClearTestData() {
-  resetSession()
-  showScreen('idle')
+/** 直接進入選版型，整段流程標記為測試資料（與測試面板進入 template 相同） */
+function onTestPhoto() {
+  setTestSession(true)
   close()
+  showScreen('template')
 }
 
 async function onUpload() {
@@ -177,8 +178,8 @@ onUnmounted(() => {
       <button type="button" class="menu-btn" @click="onWatchDb">
         觀看資料庫
       </button>
-      <button type="button" class="menu-btn" @click="onClearTestData">
-        清除測試資料
+      <button type="button" class="menu-btn" @click="onTestPhoto">
+        測試拍照
       </button>
       <button type="button" class="menu-btn" @click="onUpload">
         上傳資料

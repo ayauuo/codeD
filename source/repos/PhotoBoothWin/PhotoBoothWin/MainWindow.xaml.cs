@@ -18,6 +18,8 @@ namespace PhotoBoothWin
         private RS232BillAcceptor? _billAcceptor;
         private ArduinoCoinAcceptor? _coinAcceptor;
         private bool _paymentsEnabled = true;
+        /// <summary>為 true 時，加印收款僅計入紙鈔機，忽略投幣器（避免與紙鈔同時觸發造成重複計金額）。</summary>
+        private bool _suppressCoinPaidForExtraPrint;
         private DateTime _lastLiveViewPost = DateTime.MinValue;
         private const int LiveViewThrottleMs = 100;
         private int _liveViewFramesPushed;
@@ -112,6 +114,17 @@ namespace PhotoBoothWin
                                     _paymentsEnabled = enabledProp.GetBoolean();
                                     HandleBillAcceptorControl(_paymentsEnabled);
                                     System.Diagnostics.Debug.WriteLine(_paymentsEnabled ? "✓ 收錢已啟用" : "✓ 收錢已暫停（上傳中）");
+                                    return;
+                                }
+                            }
+                            if (eventName == "extra_print_coin_suppress")
+                            {
+                                if (jsonDoc.RootElement.TryGetProperty("suppress", out var supProp))
+                                {
+                                    _suppressCoinPaidForExtraPrint = supProp.GetBoolean();
+                                    System.Diagnostics.Debug.WriteLine(_suppressCoinPaidForExtraPrint
+                                        ? "✓ 加印收款中：投幣器 paid 將略過（僅計紙鈔）"
+                                        : "✓ 加印收款結束：投幣器 paid 恢復");
                                     return;
                                 }
                             }
@@ -382,6 +395,11 @@ namespace PhotoBoothWin
         private void OnBillReceived(object? sender, int amount)
         {
             if (!_paymentsEnabled) return;
+            if (sender is ArduinoCoinAcceptor && _suppressCoinPaidForExtraPrint)
+            {
+                System.Diagnostics.Debug.WriteLine($"[付款] 略過投幣器（加印僅計紙鈔）：{amount} 元");
+                return;
+            }
             System.Diagnostics.Debug.WriteLine($"=== 收到付款事件：{amount} 元 ===");
             
             // 使用 UI 線程發送訊息到 WebView

@@ -57,7 +57,7 @@ if exist "%PUBLISH_DIR%\web\assets\templates\ShootPage\background.png" (
 )
 
 echo [6] 檢查結果頁面資源...
-if exist "%PUBLISH_DIR%\web\assets\templates\QRcodePage\bk01.png" (
+if exist "%PUBLISH_DIR%\web\assets\templates\QRcodePage\bk01.jpg" (
     echo ✓ 結果頁面模板存在
 ) else (
     echo ✗ 結果頁面模板不存在！

@@ -1,4 +1,4 @@
-import { ref, computed, shallowRef, nextTick } from 'vue'
+import { ref, computed, shallowRef, nextTick, watch } from 'vue'
 import QRCode from 'qrcode'
 import type { Template, ScreenName, FilterId, TemplateSlot } from '@/types/photobooth'
 import { callHost } from './useHost'
@@ -13,7 +13,7 @@ const TEMPLATES: Template[] = [
     id: 'bk01',
     preview: '/assets/templates/chooselayout/bk01.png',
     shotCount: 4,
-    sizeKey: '4x6',
+    sizeKey: '4x6_2IN',
     captureW: 544,
     captureH: 471,
     stageSize: { maxWidth: '1000px', maxHeight: 'calc(100vh - 200px)' },
@@ -33,7 +33,7 @@ const TEMPLATES: Template[] = [
     id: 'bk02',
     preview: '/assets/templates/chooselayout/bk02.png',
     shotCount: 4,
-    sizeKey: '4x6',
+    sizeKey: '4x6_2IN',
     captureW: 547,
     captureH: 405,
     stageSize: { maxWidth: '1000px', maxHeight: 'calc(100vh - 200px)' },
@@ -52,7 +52,7 @@ const TEMPLATES: Template[] = [
     id: 'bk03',
     preview: '/assets/templates/chooselayout/bk03.png',
     shotCount: 2,
-    sizeKey: '4x6',
+    sizeKey: '4x6_2IN',
     captureW: 524,
     captureH: 502,
     stageSize: { maxWidth: '1000px', maxHeight: 'calc(100vh - 200px)' },
@@ -69,7 +69,7 @@ const TEMPLATES: Template[] = [
     id: 'bk04',
     preview: '/assets/templates/chooselayout/bk04.png',
     shotCount: 4,
-    sizeKey: '4x6',
+    sizeKey: '4x6_2IN',
     captureW: 529,
     captureH: 400,
     stageSize: { maxWidth: '1000px', maxHeight: 'calc(100vh - 200px)' },
@@ -96,6 +96,56 @@ const finalPreviewUrl = ref<string>('')
 const qrImageUrl = ref<string>('')
 const qrText = ref<string>('')
 const autoPrint = ref(false)
+/** 無網路版加印：使用者確認「付費張數」後，等待投入 (張數×100) 元；實際列印張數為付費張數+1（見 ScreenResult） */
+const extraPrintPendingCopies = ref<number | null>(null)
+/** 加印收款累計（單位：元，與 WPF paid 事件一致） */
+const extraPrintReceivedCents = ref(0)
+/** 加印款項收齊後由 ScreenResult watch 觸發列印 */
+const extraPrintTriggerPrint = ref<{ copies: number } | null>(null)
+/** 加印關閉收鈔後，短暫不將 paid 計入待機累計，避免延遲入金在待機誤觸進版型 */
+const suppressIdlePaidUntil = ref(0)
+const EXTRA_PRINT_IDLE_SUPPRESS_MS = 1500
+/** 付費張數以外多印的張數（業務：付費 N 張價錢 → 出紙 N+1） */
+const EXTRA_PRINT_BONUS_SHEETS = 1
+function suppressIdlePaidAfterExtraPrintMs(ms = EXTRA_PRINT_IDLE_SUPPRESS_MS) {
+  const u = Date.now() + ms
+  if (u > suppressIdlePaidUntil.value) suppressIdlePaidUntil.value = u
+}
+
+function postBillAcceptorEnabled(enabled: boolean) {
+  try {
+    const win = window as unknown as { chrome?: { webview?: { postMessage: (msg: string) => void } } }
+    if (win.chrome?.webview) {
+      win.chrome.webview.postMessage(JSON.stringify({ '@event': 'bill_acceptor_control', enabled }))
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/** 加印收款時為 true，WPF 會略過投幣器 paid，避免與紙鈔同時觸發造成重複計金額 */
+function postExtraPrintCoinSuppress(suppress: boolean) {
+  try {
+    const win = window as unknown as { chrome?: { webview?: { postMessage: (msg: string) => void } } }
+    if (win.chrome?.webview) {
+      win.chrome.webview.postMessage(JSON.stringify({ '@event': 'extra_print_coin_suppress', suppress }))
+    }
+  } catch {
+    // ignore
+  }
+}
+
+/** 離開結果頁時中止加印收款（僅註冊一次，勿放在 usePhotobooth() 內） */
+watch(currentScreen, (next, prev) => {
+  if (prev === 'result' && next !== 'result' && extraPrintPendingCopies.value != null) {
+    extraPrintPendingCopies.value = null
+    extraPrintReceivedCents.value = 0
+    postBillAcceptorEnabled(false)
+    postExtraPrintCoinSuppress(false)
+    suppressIdlePaidAfterExtraPrintMs()
+  }
+})
+
 const selectedFilter = ref<FilterId | null>(null)
 /** 倒數拍攝過程錄下的影片 blob，合成後上傳並在 QR 頁提供下載 */
 const captureVideoBlob = ref<Blob | null>(null)
@@ -206,16 +256,42 @@ export function usePhotobooth() {
   }
 
   function notifyBillAcceptorState(enabled: boolean) {
-    try {
-      const win = window as unknown as { chrome?: { webview?: { postMessage: (msg: string) => void } } }
-      if (win.chrome?.webview) {
-        win.chrome.webview.postMessage(
-          JSON.stringify({ '@event': 'bill_acceptor_control', enabled })
-        )
-      }
-    } catch {
-      // ignore
-    }
+    postBillAcceptorEnabled(enabled)
+  }
+
+  function startExtraPrintAwaitPayment(copies: number) {
+    const n = Math.round(Number(copies))
+    const c = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1
+    extraPrintPendingCopies.value = c
+    extraPrintReceivedCents.value = 0
+    notifyBillAcceptorState(true)
+    postExtraPrintCoinSuppress(true)
+  }
+
+  function cancelExtraPrintAwaitPayment() {
+    if (extraPrintPendingCopies.value == null) return
+    extraPrintPendingCopies.value = null
+    extraPrintReceivedCents.value = 0
+    notifyBillAcceptorState(false)
+    postExtraPrintCoinSuppress(false)
+    suppressIdlePaidAfterExtraPrintMs()
+  }
+
+  function applyPaidForExtraPrint(amount: number): { complete: boolean; surplusCents: number } {
+    if (extraPrintPendingCopies.value == null) return { complete: false, surplusCents: 0 }
+    const pending = extraPrintPendingCopies.value
+    const target = pending * 100
+    extraPrintReceivedCents.value += amount
+    if (extraPrintReceivedCents.value < target) return { complete: false, surplusCents: 0 }
+    const surplus = extraPrintReceivedCents.value - target
+    const printSheets = pending + EXTRA_PRINT_BONUS_SHEETS
+    extraPrintTriggerPrint.value = { copies: printSheets }
+    extraPrintPendingCopies.value = null
+    extraPrintReceivedCents.value = 0
+    notifyBillAcceptorState(false)
+    postExtraPrintCoinSuppress(false)
+    suppressIdlePaidAfterExtraPrintMs()
+    return { complete: true, surplusCents: surplus }
   }
 
   function getDefaultTemplateIndex(): number {
@@ -249,6 +325,10 @@ export function usePhotobooth() {
     selectedTemplate.value = null
     selectedFilter.value = null
     isTestSession.value = false
+    extraPrintPendingCopies.value = null
+    extraPrintReceivedCents.value = 0
+    extraPrintTriggerPrint.value = null
+    postExtraPrintCoinSuppress(false)
   }
 
   function setTestSession(isTest: boolean) {
@@ -422,7 +502,7 @@ export function usePhotobooth() {
       callHost('result_image_ready', {
         filePath,
         imageData: dataUrl,
-        sizeKey: tpl.sizeKey ?? '4x6',
+        sizeKey: tpl.sizeKey ?? '4x6_2IN',
       }).catch(() => {})
 
       // 無網路版：不上傳、不產生 QR code
@@ -518,6 +598,13 @@ export function usePhotobooth() {
     qrDisplayText,
     autoPrint,
     isTestSession,
+    extraPrintPendingCopies,
+    extraPrintReceivedCents,
+    extraPrintTriggerPrint,
+    suppressIdlePaidUntil,
+    startExtraPrintAwaitPayment,
+    cancelExtraPrintAwaitPayment,
+    applyPaidForExtraPrint,
     templates,
     setLoading,
     showScreen,

@@ -89,7 +89,8 @@ namespace PhotoBoothWin.Services
             // 確保 Hot Folder.exe 正在運行
             EnsureHotFolderRunning();
 
-            copies = Math.Clamp(copies, 1, 5);
+            // 與 BoothBridge print_hotfolder、Vue 送印張數上限一致（加印 N+1 張時可超過舊版 5 張上限）
+            copies = Math.Clamp(copies, 1, 99);
 
             var root = HotRoot;
             var folder = Path.Combine(root, sizeKey);   // ex: 4x6 / 2x6 / 4x6_2IN / 3_5x5

@@ -62,6 +62,15 @@ const rangeLabel = computed(() => {
   }
 })
 
+/** 收取金額加總，不含測試資料列（與表格「是否為測試」一致） */
+const totalAmountNonTest = computed(() =>
+  rows.value.reduce((sum, r) => {
+    if (r.isTest) return sum
+    const n = typeof r.amount === 'number' ? r.amount : Number(r.amount)
+    return sum + (Number.isFinite(n) ? n : 0)
+  }, 0),
+)
+
 watch([selectedDate, rangeType], () => { fetchRecords() })
 onMounted(() => { fetchRecords() })
 
@@ -115,6 +124,10 @@ function setRange(t: 'day' | 'week' | 'month') {
           <div class="total-row">
             <span class="total-label">列印總張數</span>
             <span class="total-value">{{ totalPrintSheets }}</span>
+          </div>
+          <div class="total-row">
+            <span class="total-label">總金額</span>
+            <span class="total-value">{{ totalAmountNonTest }}</span>
           </div>
           <div class="total-row total-row--test">
             <span class="total-label">測試總張數</span>

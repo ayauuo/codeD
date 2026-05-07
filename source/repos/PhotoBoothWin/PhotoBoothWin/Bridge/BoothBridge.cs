@@ -89,7 +89,8 @@ namespace PhotoBoothWin.Bridge
                                 copies = c.GetInt32();
                             }
 
-                            copies = Math.Clamp(copies, 1, 5);
+                            // 與前端 runPrintJob／log_print_record 一致（加印付費 N 張可送印 N+1，最高 99）
+                            copies = Math.Clamp(copies, 1, 99);
 
                             await Task.Run(() => HotFolderPrinter.SendToHotFolder(filePath, sizeKey, copies)).ConfigureAwait(false);
                             return Ok(req.id, new { copies });
@@ -137,6 +138,9 @@ namespace PhotoBoothWin.Bridge
                             bool isTest = false;
                             if (req.data.TryGetProperty("isTest", out var it) && (it.ValueKind == System.Text.Json.JsonValueKind.True || it.ValueKind == System.Text.Json.JsonValueKind.Number && it.GetInt32() != 0))
                                 isTest = true;
+                            // 測試資料：金額一律以 0 寫入 CSV／SQLite（與前端一致）
+                            if (isTest)
+                                amountStr = "0";
                             var err = PrintLogHelper.AppendRecord(templateName, printTime, amountStr, projectName, machineName);
                             if (err != null) return RespFail(req.id, err);
                             var errDb = PhotoDetailStore.InsertPrintRecord(templateName, printTime, amountStr, projectName, machineName, copies, isTest);

@@ -16,7 +16,18 @@ import LoadingOverlay from '@/components/photobooth/LoadingOverlay.vue'
 import Footer from '@/components/photobooth/Footer.vue'
 
 const photobooth = usePhotobooth()
-const { currentScreen, showScreen, runDevStartPage, buildFinalOutput, selectTemplate, templates, callHost } = photobooth
+const {
+  currentScreen,
+  showScreen,
+  runDevStartPage,
+  buildFinalOutput,
+  selectTemplate,
+  templates,
+  callHost,
+  extraPrintPendingCopies,
+  applyPaidForExtraPrint,
+  suppressIdlePaidUntil,
+} = photobooth
 const { setHostLiveViewDataUrl, liveViewFrameCount } = useLiveView()
 
 /** 已付金額累積：紙鈔只收 100 元；投幣器被動、可累積超過 100（例如 200），滿 100 扣一次進選版型，回到待機後餘額若仍 >= 100 再進選版型一次 */
@@ -161,6 +172,20 @@ onMounted(() => {
         }
         const amount = typeof msg.amount === 'number' ? msg.amount : 0
         if (eventType !== 'paid' || amount <= 0) return
+        // 無網路版結果頁「加印」：款項只計入加印目標，不進入待機累計（完成時超收可退回累計）
+        if (extraPrintPendingCopies.value != null && currentScreen.value === 'result') {
+          const r = applyPaidForExtraPrint(amount)
+          if (r.complete && r.surplusCents > 0) paidAccumulated.value += r.surplusCents
+          return
+        }
+        // 結果頁（非加印收款中）：不計入待機累計
+        if (currentScreen.value === 'result') {
+          return
+        }
+        // 加印關閉收鈔後短暫忽略：避免延遲的 paid 在待機被當成新一組客入金而進版型
+        if (currentScreen.value === 'idle' && Date.now() < suppressIdlePaidUntil.value) {
+          return
+        }
         paidAccumulated.value += amount
         if (currentScreen.value === 'idle' && paidAccumulated.value >= 100) {
           tryGoToTemplateIfPaid()

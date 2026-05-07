@@ -20,7 +20,11 @@ namespace PhotoBoothWin.Services
         private ReceiveState _currentState = ReceiveState.Idle; // 狀態機
         private bool _isEscrowMode = false; // Escrow 模式標記
         private DateTime _escrowStartTime; // Escrow 開始時間
-        
+        /// <summary>上次成功觸發 100 元入鈔的時間（UTC），用於略過同一張鈔未走完又重送的面額訊號。</summary>
+        private DateTime _lastBillAcceptedUtc = DateTime.MinValue;
+        /// <summary>兩次有效入鈔事件的最小間隔（毫秒）；過短視為重複判讀。</summary>
+        private const int BillAcceptCooldownMs = 800;
+
         // 幣值映射表（支援多種編碼格式）
         private readonly Dictionary<byte, int> _denominationMap = new Dictionary<byte, int>
         {
@@ -459,6 +463,15 @@ namespace PhotoBoothWin.Services
                 // 只接受 100 元紙鈔
                 if (amount == 100)
                 {
+                    var now = DateTime.UtcNow;
+                    if ((now - _lastBillAcceptedUtc).TotalMilliseconds < BillAcceptCooldownMs)
+                    {
+                        LogMessage(
+                            $"⚠ 略過冷卻期內重複面額（防同一張鈔重複判讀），距上次 {amount} 元約 {(now - _lastBillAcceptedUtc).TotalMilliseconds:F0} ms，門檻 {BillAcceptCooldownMs} ms");
+                        return;
+                    }
+                    _lastBillAcceptedUtc = now;
+
                     StatusChanged?.Invoke(this, $"收到紙鈔: {amount}元");
                     
                     // 觸發紙鈔接收事件

@@ -356,6 +356,8 @@ VALUES (@date, @time, @machineName, @fileName, @layoutType, @createdAt, @isTest)
                 var amount = 0;
                 if (!string.IsNullOrWhiteSpace(amountStr))
                     _ = decimal.TryParse(amountStr, NumberStyles.Any, CultureInfo.InvariantCulture, out var amt) && (amount = (int)Math.Round(amt)) >= 0;
+                if (isTest)
+                    amount = 0;
 
                 copies = Math.Clamp(copies, 1, 99);
 

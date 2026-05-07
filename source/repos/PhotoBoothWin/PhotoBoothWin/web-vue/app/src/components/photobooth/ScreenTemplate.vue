@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Template } from '@/types/photobooth'
 import { usePhotobooth } from '@/composables/usePhotobooth'
 import { unlockCountdownAudio } from '@/composables/useTakePicture'
@@ -11,11 +11,10 @@ const templateListRef = ref<HTMLElement | null>(null)
 const hasSelection = computed(() => !!selectedTemplate.value)
 
 function onCardClick(t: Template) {
-  if (selectedTemplate.value?.id === t.id) {
-    msgboxVisible.value = true
-    return
+  if (selectedTemplate.value?.id !== t.id) {
+    selectTemplate(t)
   }
-  selectTemplate(t)
+  msgboxVisible.value = true
 }
 
 function confirmTemplate() {

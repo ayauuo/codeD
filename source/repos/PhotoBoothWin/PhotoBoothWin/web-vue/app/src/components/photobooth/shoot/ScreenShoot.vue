@@ -923,6 +923,12 @@ watch(
               />
             </div>
           </div>
+          <p
+            v-show="!showFilterOptions && tp.shootingDone.value"
+            class="shoot-reshoot-hint"
+          >
+            每張相片皆可重拍一次
+          </p>
         </div>
       </div>
       <div class="right-panel">
@@ -1118,6 +1124,24 @@ watch(
     // justify-content: center;
     align-items: center;
     gap: 24px;
+
+    .shoot-reshoot-hint {
+      margin: 8px 0 0;
+      padding: 8px 10px;
+      max-width: 100%;
+      text-align: center;
+      white-space: nowrap;
+      font-size: clamp(18px, 1.4vw, 30px);
+      font-weight: 700;
+      line-height: 1.35;
+      letter-spacing: 0.04em;
+      color: #1a1a1a;
+      text-shadow:
+        0 0 10px rgba(255, 255, 255, 0.95),
+        0 0 3px rgba(255, 255, 255, 0.9),
+        0 1px 2px rgba(0, 0, 0, 0.15);
+      flex-shrink: 0;
+    }
     // position: absolute;
     // top: 135px;
     // left: 299px;

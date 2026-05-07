@@ -34,6 +34,7 @@ function onFilterClick(id: FilterId) {
       {{ opt.label }}
     </button>
     </div>
+    <p class="filter-options__hint">再次點擊選項，即可取消濾鏡</p>
   </div>
 </template>
 
@@ -49,12 +50,39 @@ function onFilterClick(id: FilterId) {
   overflow: hidden;
 }
 
+.filter-options__hint {
+  flex-shrink: 0;
+  margin: 8px 0 0;
+  padding: 0 4px;
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1.45;
+  letter-spacing: 0.02em;
+  color: $color-333;
+  text-align: center;
+  /* 白邊：多層 text-shadow 模擬描邊，在放射線背景上較易辨識 */
+  text-shadow:
+    0 0 6px #fff,
+    0 0 12px rgba(255, 255, 255, 0.95),
+    -2px -2px 0 #fff,
+    2px -2px 0 #fff,
+    -2px 2px 0 #fff,
+    2px 2px 0 #fff,
+    -1px 0 0 #fff,
+    1px 0 0 #fff,
+    0 -1px 0 #fff,
+    0 1px 0 #fff;
+}
+
 .filter-options__scroll {
+  /* 勿 flex:1 撐滿高度，否則提示文字會被擠到畫面底部、與按鈕距離過大 */
+  flex: 0 1 auto;
+  max-height: min(calc(100vh - 220px), 900px);
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: 48px;
-  padding: 8px 0;
-  max-height: 100%;
+  padding: 8px 0 0;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;

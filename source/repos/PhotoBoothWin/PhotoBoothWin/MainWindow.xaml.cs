@@ -16,10 +16,7 @@ namespace PhotoBoothWin
     {
         private readonly BoothBridge _bridge = new BoothBridge();
         private RS232BillAcceptor? _billAcceptor;
-        private ArduinoCoinAcceptor? _coinAcceptor;
         private bool _paymentsEnabled = true;
-        /// <summary>為 true 時，加印收款僅計入紙鈔機，忽略投幣器（避免與紙鈔同時觸發造成重複計金額）。</summary>
-        private bool _suppressCoinPaidForExtraPrint;
         private DateTime _lastLiveViewPost = DateTime.MinValue;
         private const int LiveViewThrottleMs = 100;
         private int _liveViewFramesPushed;
@@ -117,17 +114,6 @@ namespace PhotoBoothWin
                                     return;
                                 }
                             }
-                            if (eventName == "extra_print_coin_suppress")
-                            {
-                                if (jsonDoc.RootElement.TryGetProperty("suppress", out var supProp))
-                                {
-                                    _suppressCoinPaidForExtraPrint = supProp.GetBoolean();
-                                    System.Diagnostics.Debug.WriteLine(_suppressCoinPaidForExtraPrint
-                                        ? "✓ 加印收款中：投幣器 paid 將略過（僅計紙鈔）"
-                                        : "✓ 加印收款結束：投幣器 paid 恢復");
-                                    return;
-                                }
-                            }
                         }
                     }
                     catch
@@ -168,8 +154,6 @@ namespace PhotoBoothWin
                         await Task.Delay(5000);
                         Dispatcher.Invoke(() =>
                         {
-                            // 先啟動投幣器（COM8），再啟動紙鈔機（避開 COM8），避免搶埠
-                            StartCoinAcceptor(); // Arduino 投幣器 COM8，PULSES=數字 → 金額
                             StartBillAcceptor();
                         });
                     });
@@ -216,9 +200,8 @@ namespace PhotoBoothWin
                             }
                         }
                         
-                        // 自動偵測串口
-                        string? detectedPort = AutoDetectBillAcceptorPort();
-                        string portToUse = detectedPort ?? "COM7"; // 默認使用 COM7
+                        // 紙鈔機固定使用 COM8
+                        const string portToUse = "COM8";
                         System.Diagnostics.Debug.WriteLine($"使用串口：{portToUse}");
                         
                         // 創建 RS232 監聽服務
@@ -303,51 +286,7 @@ namespace PhotoBoothWin
         }
 
         /// <summary>
-        /// 啟動 Arduino 投幣器（COM8, 115200）。收到 PULSES=50 時會觸發 50 元付款事件。
-        /// </summary>
-        private void StartCoinAcceptor()
-        {
-            Task.Run(() =>
-            {
-                try
-                {
-                    string[] ports = System.IO.Ports.SerialPort.GetPortNames();
-                    System.Diagnostics.Debug.WriteLine($"[投幣器] 可用串口：{string.Join(", ", ports)}");
-                    if (!ports.Any(p => string.Equals(p, "COM8", StringComparison.OrdinalIgnoreCase)))
-                    {
-                        System.Diagnostics.Debug.WriteLine("[投幣器] 未找到 COM8，跳過 Arduino 投幣器（請確認投幣器接在 COM8）");
-                        return;
-                    }
-                    _coinAcceptor = new ArduinoCoinAcceptor("COM8", 115200);
-                    _coinAcceptor.CoinReceived += OnBillReceived; // 與紙鈔共用同一付款處理
-                    _coinAcceptor.StatusChanged += (s, msg) => System.Diagnostics.Debug.WriteLine($"[投幣器] {msg}");
-                    _coinAcceptor.ErrorOccurred += (s, err) => System.Diagnostics.Debug.WriteLine($"[投幣器錯誤] {err}");
-                    _coinAcceptor.Start();
-                    if (_coinAcceptor.IsOpen)
-                    {
-                        System.Diagnostics.Debug.WriteLine("✓ Arduino 投幣器已連接 (COM8)，等待 PULSES=數字 格式資料");
-                        Dispatcher.Invoke(() => ShowStatusMessage("投幣器已連接 (COM8)", isError: false));
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine("[投幣器] COM8 開啟失敗（可能已被其他程式占用）");
-                        NotifyCoinAcceptorPortInUse();
-                    }
-                }
-                catch (UnauthorizedAccessException ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[投幣器] COM8 被占用或無權限：{ex.Message}");
-                    NotifyCoinAcceptorPortInUse();
-                }
-                catch (Exception ex)
-                {
-                    System.Diagnostics.Debug.WriteLine($"[投幣器] 啟動失敗：{ex.Message}");
-                }
-            });
-        }
-
-        /// <summary>
-        /// 取得前端（web）資料夾路徑。可透過環境變數 PHOTOBOOTH_WEB_ROOT 或 exe 旁 web_root.txt（第一行）覆寫，否則為 exe 旁 web 資料夾。
+        /// 取得前端（web）資料夾路徑。可透過環境變數 PHOTOBOOTH_WEB_ROOT 或 exe 旁 web_root.txt（第一行路徑）覆寫，否則為 exe 旁 web 資料夾。
         /// </summary>
         private static string GetWebRootPath()
         {
@@ -371,35 +310,9 @@ namespace PhotoBoothWin
             return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "web");
         }
 
-        /// <summary>
-        /// COM8 被占用時，在 UI 與 WebView 顯示解決方式。
-        /// </summary>
-        private void NotifyCoinAcceptorPortInUse()
-        {
-            const string msg = "COM8 被占用，請關閉 RS232-ICT004.exe 或其他使用 COM8 的程式";
-            Dispatcher.Invoke(() =>
-            {
-                ShowStatusMessage(msg, isError: true);
-                try
-                {
-                    if (Web.CoreWebView2 != null)
-                    {
-                        var json = JsonSerializer.Serialize(new { @event = "status", message = msg, isError = true });
-                        Web.CoreWebView2.PostWebMessageAsString(json);
-                    }
-                }
-                catch { }
-            });
-        }
-
         private void OnBillReceived(object? sender, int amount)
         {
             if (!_paymentsEnabled) return;
-            if (sender is ArduinoCoinAcceptor && _suppressCoinPaidForExtraPrint)
-            {
-                System.Diagnostics.Debug.WriteLine($"[付款] 略過投幣器（加印僅計紙鈔）：{amount} 元");
-                return;
-            }
             System.Diagnostics.Debug.WriteLine($"=== 收到付款事件：{amount} 元 ===");
             
             // 使用 UI 線程發送訊息到 WebView
@@ -428,68 +341,6 @@ namespace PhotoBoothWin
             });
         }
 
-        /// <summary>
-        /// 自動偵測紙鈔機串口
-        /// 支援多種 COM 口格式，包括 "COM1", "COM2" 等標準格式
-        /// </summary>
-        private string? AutoDetectBillAcceptorPort()
-        {
-            try
-            {
-                string[] ports = System.IO.Ports.SerialPort.GetPortNames();
-                System.Diagnostics.Debug.WriteLine($"系統中可用的串口：{string.Join(", ", ports)}");
-                
-                if (ports.Length == 0)
-                {
-                    System.Diagnostics.Debug.WriteLine("警告：系統中沒有可用的串口");
-                    return null;
-                }
-                
-                // 優先順序：COM7（紙鈔機專用），COM1、COM2、COM4…；COM8 保留給 Arduino 投幣器
-                string[] preferredPorts = { "COM7", "COM1", "COM2", "COM4", "COM5", "COM6", "COM8", "COM9", "COM10" };
-                
-                // 首先嘗試找到優先串口（精確匹配）
-                foreach (string preferred in preferredPorts)
-                {
-                    if (ports.Contains(preferred, StringComparer.OrdinalIgnoreCase))
-                    {
-                        System.Diagnostics.Debug.WriteLine($"找到優先串口：{preferred}");
-                        return preferred;
-                    }
-                }
-                
-                // 如果沒有找到優先串口，嘗試從所有串口中找到第一個有效的 COM 口
-                // COM8 保留給 Arduino 投幣器，紙鈔機不可使用
-                var validComPorts = ports
-                    .Where(p => p.StartsWith("COM", StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(p, "COM8", StringComparison.OrdinalIgnoreCase))
-                    .OrderBy(p => 
-                    {
-                        // 提取 COM 後的數字進行排序
-                        if (p.Length > 3 && int.TryParse(p.Substring(3), out int num))
-                            return num;
-                        return int.MaxValue;
-                    })
-                    .ToList();
-                
-                if (validComPorts.Count > 0)
-                {
-                    System.Diagnostics.Debug.WriteLine($"找到有效串口（已排除 COM8）：{string.Join(", ", validComPorts)}");
-                    System.Diagnostics.Debug.WriteLine($"使用第一個有效串口：{validComPorts[0]}");
-                    return validComPorts[0];
-                }
-                
-                // 若僅剩 COM8（已保留給投幣器），紙鈔機無可用串口
-                System.Diagnostics.Debug.WriteLine("沒有紙鈔機可用串口（COM8 已保留給投幣器）");
-                return null;
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"自動偵測串口失敗：{ex.Message}");
-                return null;
-            }
-        }
-        
         /// <summary>
         /// 處理狀態變化事件
         /// </summary>
@@ -735,7 +586,6 @@ namespace PhotoBoothWin
             _liveViewFramesPushed = 0;
             CameraServiceProvider.Current.LiveViewFrameReady -= OnLiveViewFrameReady;
             _billAcceptor?.Dispose();
-            _coinAcceptor?.Dispose();
             base.OnClosed(e);
         }
     }

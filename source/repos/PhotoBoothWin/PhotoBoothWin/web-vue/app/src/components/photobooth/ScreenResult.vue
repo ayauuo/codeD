@@ -33,6 +33,11 @@ const extraPrintPayTarget = computed(() => {
   return p == null ? 0 : p * 100
 })
 
+/** 投入第一張紙鈔後隱藏取消／重選（僅在未收到任何款項時顯示） */
+const showExtraPrintPayCancel = computed(
+  () => extraPrintPayTarget.value > 0 && extraPrintReceivedCents.value === 0
+)
+
 function getResultAutoPrintSec(): number {
   const raw = import.meta.env.VITE_RESULT_AUTO_PRINT_SEC
   if (raw === undefined || raw === '') return 60
@@ -358,7 +363,10 @@ watch(extraPrintTriggerPrint, (v) => {
                 <p class="extra-print-pay__hint">
                   請投入 {{ extraPrintPayTarget }} 元（已收 {{ extraPrintReceivedCents }} 元）
                 </p>
-                <div class="extra-print-dialog__pay-cancel-wrap">
+                <div
+                  v-if="showExtraPrintPayCancel"
+                  class="extra-print-dialog__pay-cancel-wrap"
+                >
                   <button
                     type="button"
                     class="extra-print-dialog__imgbtn extra-print-dialog__imgbtn--pay-cancel"

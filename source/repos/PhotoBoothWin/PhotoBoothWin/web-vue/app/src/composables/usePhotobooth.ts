@@ -105,8 +105,32 @@ const extraPrintTriggerPrint = ref<{ copies: number } | null>(null)
 /** 加印關閉收鈔後，短暫不將 paid 計入待機累計，避免延遲入金在待機誤觸進版型 */
 const suppressIdlePaidUntil = ref(0)
 const EXTRA_PRINT_IDLE_SUPPRESS_MS = 1500
+/** 加印款項收齊後，延遲關閉紙鈔機（毫秒） */
+const EXTRA_PRINT_BILL_CLOSE_DELAY_MS = 500
 /** 付費張數以外多印的張數（業務：付費 N 張價錢 → 出紙 N+1） */
 const EXTRA_PRINT_BONUS_SHEETS = 1
+/** 加印收足款後暫時維持紙鈔機開啟，直到延遲關閉計時結束 */
+const extraPrintBillAcceptorHoldUntil = ref(0)
+let extraPrintBillCloseTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearExtraPrintBillCloseTimer() {
+  if (extraPrintBillCloseTimer != null) {
+    clearTimeout(extraPrintBillCloseTimer)
+    extraPrintBillCloseTimer = null
+  }
+  extraPrintBillAcceptorHoldUntil.value = 0
+}
+
+function scheduleExtraPrintBillAcceptorClose() {
+  clearExtraPrintBillCloseTimer()
+  extraPrintBillAcceptorHoldUntil.value = Date.now() + EXTRA_PRINT_BILL_CLOSE_DELAY_MS
+  extraPrintBillCloseTimer = setTimeout(() => {
+    extraPrintBillCloseTimer = null
+    extraPrintBillAcceptorHoldUntil.value = 0
+    syncBillAcceptorState()
+  }, EXTRA_PRINT_BILL_CLOSE_DELAY_MS)
+}
+
 function suppressIdlePaidAfterExtraPrintMs(ms = EXTRA_PRINT_IDLE_SUPPRESS_MS) {
   const u = Date.now() + ms
   if (u > suppressIdlePaidUntil.value) suppressIdlePaidUntil.value = u
@@ -123,16 +147,16 @@ function postBillAcceptorEnabled(enabled: boolean) {
   }
 }
 
-/** 加印收款時為 true，WPF 會略過投幣器 paid，避免與紙鈔同時觸發造成重複計金額 */
-function postExtraPrintCoinSuppress(suppress: boolean) {
-  try {
-    const win = window as unknown as { chrome?: { webview?: { postMessage: (msg: string) => void } } }
-    if (win.chrome?.webview) {
-      win.chrome.webview.postMessage(JSON.stringify({ '@event': 'extra_print_coin_suppress', suppress }))
-    }
-  } catch {
-    // ignore
-  }
+/** 僅待機頁或加印收款中才應開啟紙鈔機 */
+function shouldBillAcceptorBeEnabled(): boolean {
+  if (extraPrintPendingCopies.value != null) return true
+  if (Date.now() < extraPrintBillAcceptorHoldUntil.value) return true
+  return currentScreen.value === 'idle'
+}
+
+/** 依目前畫面同步紙鈔機啟用狀態 */
+function syncBillAcceptorState() {
+  postBillAcceptorEnabled(shouldBillAcceptorBeEnabled())
 }
 
 /** 離開結果頁時中止加印收款（僅註冊一次，勿放在 usePhotobooth() 內） */
@@ -140,10 +164,10 @@ watch(currentScreen, (next, prev) => {
   if (prev === 'result' && next !== 'result' && extraPrintPendingCopies.value != null) {
     extraPrintPendingCopies.value = null
     extraPrintReceivedCents.value = 0
-    postBillAcceptorEnabled(false)
-    postExtraPrintCoinSuppress(false)
     suppressIdlePaidAfterExtraPrintMs()
+    clearExtraPrintBillCloseTimer()
   }
+  syncBillAcceptorState()
 })
 
 const selectedFilter = ref<FilterId | null>(null)
@@ -242,39 +266,34 @@ export function usePhotobooth() {
       // #region agent log
       fetch('http://127.0.0.1:7242/ingest/60461173-9774-483b-a750-822bb1590c42', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Debug-Session-Id': 'b8574e' }, body: JSON.stringify({ sessionId: 'b8574e', location: 'usePhotobooth.ts:showScreen:after_reset', message: 'template_screen_isTest_after_reset', data: { name, isTestSession: isTestSession.value }, timestamp: Date.now(), hypothesisId: 'H1', runId: 'post-fix' }) }).catch(() => {})
       // #endregion
-      notifyBillAcceptorState(false)
     }
     if (name === 'idle') {
       resetSession()
-      notifyBillAcceptorState(true)
     }
     currentScreen.value = name
+    syncBillAcceptorState()
   }
 
   function selectFilter(id: FilterId | null) {
     selectedFilter.value = id
   }
 
-  function notifyBillAcceptorState(enabled: boolean) {
-    postBillAcceptorEnabled(enabled)
-  }
-
   function startExtraPrintAwaitPayment(copies: number) {
+    clearExtraPrintBillCloseTimer()
     const n = Math.round(Number(copies))
     const c = Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : 1
     extraPrintPendingCopies.value = c
     extraPrintReceivedCents.value = 0
-    notifyBillAcceptorState(true)
-    postExtraPrintCoinSuppress(true)
+    syncBillAcceptorState()
   }
 
   function cancelExtraPrintAwaitPayment() {
     if (extraPrintPendingCopies.value == null) return
+    clearExtraPrintBillCloseTimer()
     extraPrintPendingCopies.value = null
     extraPrintReceivedCents.value = 0
-    notifyBillAcceptorState(false)
-    postExtraPrintCoinSuppress(false)
     suppressIdlePaidAfterExtraPrintMs()
+    syncBillAcceptorState()
   }
 
   function applyPaidForExtraPrint(amount: number): { complete: boolean; surplusCents: number } {
@@ -288,9 +307,8 @@ export function usePhotobooth() {
     extraPrintTriggerPrint.value = { copies: printSheets }
     extraPrintPendingCopies.value = null
     extraPrintReceivedCents.value = 0
-    notifyBillAcceptorState(false)
-    postExtraPrintCoinSuppress(false)
     suppressIdlePaidAfterExtraPrintMs()
+    scheduleExtraPrintBillAcceptorClose()
     return { complete: true, surplusCents: surplus }
   }
 
@@ -328,7 +346,6 @@ export function usePhotobooth() {
     extraPrintPendingCopies.value = null
     extraPrintReceivedCents.value = 0
     extraPrintTriggerPrint.value = null
-    postExtraPrintCoinSuppress(false)
   }
 
   function setTestSession(isTest: boolean) {

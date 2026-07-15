@@ -76,7 +76,7 @@ namespace PhotoBoothWin.Services
         /// </summary>
         public bool IsOpen => _serialPort != null && _serialPort.IsOpen;
 
-        public RS232BillAcceptor(string portName = "COM1", int baudRate = 9600)
+        public RS232BillAcceptor(string portName = "COM8", int baudRate = 9600)
         {
             _portName = portName;
             _baudRate = baudRate;
@@ -99,22 +99,11 @@ namespace PhotoBoothWin.Services
                 string[] availablePorts = SerialPort.GetPortNames();
                 System.Diagnostics.Debug.WriteLine($"可用的串口：{string.Join(", ", availablePorts)}");
                 
-                // 嘗試找到可用的串口（COM8 保留給 Arduino 投幣器，紙鈔機不可使用）
+                // 紙鈔機固定使用指定串口
                 if (!TryFindPort(out string? foundPort))
                 {
-                    System.Diagnostics.Debug.WriteLine($"警告：找不到指定的串口 {_portName}，嘗試使用其他可用串口（排除 COM8）");
-                    string? fallback = availablePorts.FirstOrDefault(p =>
-                        !string.Equals(p, "COM8", StringComparison.OrdinalIgnoreCase));
-                    if (fallback != null)
-                    {
-                        foundPort = fallback;
-                        System.Diagnostics.Debug.WriteLine($"使用串口：{foundPort}");
-                    }
-                    else
-                    {
-                        System.Diagnostics.Debug.WriteLine("錯誤：沒有紙鈔機可用串口（僅 COM8 時保留給投幣器）");
-                        return;
-                    }
+                    System.Diagnostics.Debug.WriteLine($"錯誤：找不到紙鈔機串口 {_portName}，請確認裝置管理員中 COM 埠設定");
+                    return;
                 }
 
                 // 檢查串口是否被占用
@@ -190,7 +179,7 @@ namespace PhotoBoothWin.Services
         }
 
         /// <summary>
-        /// 嘗試找到可用的串口（COM8 保留給投幣器，紙鈔機不使用）
+        /// 嘗試找到指定的串口
         /// </summary>
         private bool TryFindPort(out string? portName)
         {
@@ -202,25 +191,15 @@ namespace PhotoBoothWin.Services
                 return false;
             }
 
-            // 優先使用指定的端口（且非 COM8）
             foreach (string port in ports)
             {
-                if (port.Equals(_portName, StringComparison.OrdinalIgnoreCase)
-                    && !string.Equals(port, "COM8", StringComparison.OrdinalIgnoreCase))
+                if (port.Equals(_portName, StringComparison.OrdinalIgnoreCase))
                 {
                     portName = port;
                     return true;
                 }
             }
 
-            // 若指定埠不存在或為 COM8，使用第一個「非 COM8」的埠
-            string? fallback = ports.FirstOrDefault(p =>
-                !string.Equals(p, "COM8", StringComparison.OrdinalIgnoreCase));
-            if (fallback != null)
-            {
-                portName = fallback;
-                return true;
-            }
             return false;
         }
 

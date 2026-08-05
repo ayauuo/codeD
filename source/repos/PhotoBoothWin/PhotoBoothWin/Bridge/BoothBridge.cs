@@ -565,15 +565,8 @@ namespace PhotoBoothWin.Bridge
                     case "shutdown":
                         try
                         {
-                            // 關機前刪除 C:\test 內所有檔案
-                            var testDir = @"C:\test";
-                            if (Directory.Exists(testDir))
-                            {
-                                foreach (var file in Directory.GetFiles(testDir))
-                                {
-                                    try { File.Delete(file); } catch { /* 略過無法刪除的檔案 */ }
-                                }
-                            }
+                            // 關機前遞迴清空 C:\test（含子資料夾內所有檔案）
+                            ClearDirectoryContents(CaptureOutputDirectory);
 
                             System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
                             {
@@ -588,7 +581,6 @@ namespace PhotoBoothWin.Bridge
                             return RespFail(req.id, ex.Message);
                         }
                         return Ok(req.id, new { });
-
                     default:
                         return RespFail(req.id, "unknown cmd");
                 }
@@ -711,6 +703,37 @@ namespace PhotoBoothWin.Bridge
                 catch { }
                 // #endregion
                 return ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// 清空目錄內容：遞迴刪除所有檔案與子資料夾，保留根目錄本身。
+        /// 會先清除唯讀屬性，提高刪除成功率。
+        /// </summary>
+        private static void ClearDirectoryContents(string dir)
+        {
+            if (string.IsNullOrWhiteSpace(dir) || !Directory.Exists(dir))
+                return;
+
+            foreach (var file in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+            {
+                try
+                {
+                    File.SetAttributes(file, FileAttributes.Normal);
+                    File.Delete(file);
+                }
+                catch { /* 略過無法刪除的檔案 */ }
+            }
+
+            // 由深到淺刪除子資料夾
+            foreach (var subDir in Directory.GetDirectories(dir, "*", SearchOption.AllDirectories)
+                         .OrderByDescending(d => d.Length))
+            {
+                try
+                {
+                    Directory.Delete(subDir, recursive: false);
+                }
+                catch { /* 略過無法刪除的資料夾 */ }
             }
         }
 

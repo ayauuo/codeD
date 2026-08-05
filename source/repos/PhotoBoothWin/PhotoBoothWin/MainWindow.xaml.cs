@@ -200,8 +200,8 @@ namespace PhotoBoothWin
                             }
                         }
                         
-                        // 紙鈔機固定使用 COM8
-                        const string portToUse = "COM8";
+                        // 紙鈔機固定使用 COM7
+                        const string portToUse = "COM7";
                         System.Diagnostics.Debug.WriteLine($"使用串口：{portToUse}");
                         
                         // 創建 RS232 監聽服務

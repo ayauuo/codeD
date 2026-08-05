@@ -76,7 +76,7 @@ namespace PhotoBoothWin.Services
         /// </summary>
         public bool IsOpen => _serialPort != null && _serialPort.IsOpen;
 
-        public RS232BillAcceptor(string portName = "COM8", int baudRate = 9600)
+        public RS232BillAcceptor(string portName = "COM7", int baudRate = 9600)
         {
             _portName = portName;
             _baudRate = baudRate;
